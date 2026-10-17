@@ -7,6 +7,9 @@ namespace LinkShortener.Api.Data;
 
 public sealed class LinkRepository(LinkDbContext context) : ILinkRepository
 {
+    public Task<Link?> FindByCodeAsync(string code, CancellationToken cancellationToken) =>
+        context.Links.AsNoTracking().SingleOrDefaultAsync(link => link.Code == code, cancellationToken);
+
     public Task<bool> CodeExistsAsync(string code, CancellationToken cancellationToken) =>
         context.Links.AnyAsync(link => link.Code == code, cancellationToken);
 

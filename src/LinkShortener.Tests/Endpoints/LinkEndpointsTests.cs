@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using LinkShortener.Api.Data;
 using LinkShortener.Api.Endpoints;
+using LinkShortener.Api.Domain;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Mvc;
@@ -72,6 +73,135 @@ public sealed class LinkEndpointsTests
         });
     }
 
+    [Theory]
+    [InlineData("ABCD")]
+    [InlineData("ABCDEFGHIJKLMNOPQRST")]
+    [InlineData("IO1L")]
+    public async Task PostWithCustomCodeReturns201AndDuplicateReturns409(string code)
+    {
+        await WithApiAsync(async (client, databasePath) =>
+        {
+            var response = await client.PostAsJsonAsync("/api/links",
+                new { targetUrl = "https://8.8.8.8/original", code });
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            var body = await response.Content.ReadFromJsonAsync<CreateLinkResponse>();
+            Assert.NotNull(body);
+            Assert.Equal(code, body.Code);
+            Assert.Equal(new Uri(client.BaseAddress!, code).AbsoluteUri, body.ShortUrl);
+            Assert.Equal(body.ShortUrl, response.Headers.Location!.AbsoluteUri);
+
+            var duplicate = await client.PostAsJsonAsync("/api/links",
+                new { targetUrl = "https://8.8.8.8/duplicate", code });
+
+            Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
+            Assert.Equal("application/problem+json", duplicate.Content.Headers.ContentType!.MediaType);
+            var problem = await duplicate.Content.ReadFromJsonAsync<ProblemDetails>();
+            Assert.NotNull(problem);
+            Assert.Equal(409, problem.Status);
+            Assert.Equal("O código informado já está em uso.", problem.Detail);
+            await using var context = CreateContext(databasePath);
+            var link = Assert.Single(await context.Links.ToListAsync());
+            Assert.Equal(code, link.Code);
+            Assert.Equal("https://8.8.8.8/original", link.TargetUrl);
+        });
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("ABC")]
+    [InlineData("ABCDEFGHIJKLMNOPQRSTU")]
+    [InlineData("abcd")]
+    [InlineData("ABC0")]
+    [InlineData("AB C")]
+    [InlineData("AB-C")]
+    public async Task InvalidCustomCodeReturns400WithProblemDetails(string code)
+    {
+        await WithApiAsync(async (client, databasePath) =>
+        {
+            var response = await client.PostAsJsonAsync("/api/links",
+                new { targetUrl = "https://8.8.8.8/", code });
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal("application/problem+json", response.Content.Headers.ContentType!.MediaType);
+            var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+            Assert.NotNull(problem);
+            Assert.Equal(400, problem.Status);
+            await using var context = CreateContext(databasePath);
+            Assert.Empty(await context.Links.ToListAsync());
+        });
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("CUSTOM1")]
+    public async Task GetCreatedLinkReturns302WithExactTargetUrl(string? code)
+    {
+        await WithApiAsync(async (client, _) =>
+        {
+            const string targetUrl = "https://8.8.8.8/path?value=1&other=2#fragment";
+            var creation = await client.PostAsJsonAsync("/api/links", new { targetUrl, code });
+            Assert.Equal(HttpStatusCode.Created, creation.StatusCode);
+            var body = await creation.Content.ReadFromJsonAsync<CreateLinkResponse>();
+            Assert.NotNull(body);
+
+            var response = await client.GetAsync("/" + body.Code);
+
+            Assert.Equal(HttpStatusCode.Found, response.StatusCode);
+            Assert.Equal(targetUrl, response.Headers.Location!.OriginalString);
+        });
+    }
+
+    [Fact]
+    public async Task GetUnknownCodeReturns404()
+    {
+        await WithApiAsync(async (client, _) =>
+        {
+            var response = await client.GetAsync("/UNKNOWN");
+
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+            var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+            Assert.NotNull(problem);
+            Assert.Equal(404, problem.Status);
+            Assert.Null(response.Headers.Location);
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetPersistedLinkHonorsExpirationDate(bool expired)
+    {
+        await WithApiAsync(async (client, databasePath) =>
+        {
+            var utcToday = DateTimeOffset.UtcNow.UtcDateTime.Date;
+            await using (var context = CreateContext(databasePath))
+            {
+                context.Links.Add(new Link
+                {
+                    Code = "EXPIRY1", TargetUrl = "https://8.8.8.8/", ManagementKeyHash = "hash",
+                    ExpiresAtUtc = new DateTimeOffset(utcToday.AddDays(expired ? -1 : 1), TimeSpan.Zero)
+                });
+                await context.SaveChangesAsync();
+            }
+
+            var response = await client.GetAsync("/EXPIRY1");
+
+            Assert.Equal(expired ? HttpStatusCode.Gone : HttpStatusCode.Found, response.StatusCode);
+            if (expired)
+            {
+                Assert.Null(response.Headers.Location);
+                var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+                Assert.NotNull(problem);
+                Assert.Equal(410, problem.Status);
+                await using var context = CreateContext(databasePath);
+                Assert.Equal(0, (await context.Links.SingleAsync()).AccessCount);
+            }
+            else
+                Assert.Equal("https://8.8.8.8/", response.Headers.Location!.AbsoluteUri);
+        });
+    }
+
     private static LinkDbContext CreateContext(string path) => new(
         new DbContextOptionsBuilder<LinkDbContext>().UseSqlite($"Data Source={path};Pooling=False").Options);
 
@@ -93,7 +223,8 @@ public sealed class LinkEndpointsTests
             {
                 var server = app.Services.GetRequiredService<IServer>();
                 var address = Assert.Single(server.Features.Get<IServerAddressesFeature>()!.Addresses);
-                using var client = new HttpClient { BaseAddress = new Uri(address) };
+                using var handler = new HttpClientHandler { AllowAutoRedirect = false };
+                using var client = new HttpClient(handler) { BaseAddress = new Uri(address) };
                 await test(client, databasePath);
             }
             finally
