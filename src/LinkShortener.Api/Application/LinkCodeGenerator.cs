@@ -2,7 +2,12 @@ using System.Security.Cryptography;
 
 namespace LinkShortener.Api.Application;
 
-public sealed class LinkCodeGenerator
+public interface ILinkCodeGenerator
+{
+    string Generate();
+}
+
+public sealed class LinkCodeGenerator : ILinkCodeGenerator
 {
     // Exclude I, L, O and 1 to reduce ambiguity when reading a code aloud (D-03).
     private const string Alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
