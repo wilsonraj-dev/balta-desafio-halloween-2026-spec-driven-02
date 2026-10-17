@@ -212,6 +212,129 @@ public sealed class LinkServiceTests
             Assert.Empty(repository.IncrementedIds);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("wrong-key")]
+    [InlineData("CORRECT-KEY")]
+    public async Task StatsRejectsMissingOrIncorrectKeyWithoutCountingAccess(string? key)
+    {
+        var repository = new FakeRepository();
+        repository.Saved.Add(StatsLink());
+        var service = new LinkService(repository, new SequenceGenerator(), new TargetUrlValidator());
+
+        var result = await service.GetStatsAsync("STATS1", key);
+
+        Assert.Equal(LinkStatsStatus.Unauthorized, result.Status);
+        Assert.Null(result.Code);
+        Assert.Null(result.AccessCount);
+        Assert.Empty(repository.IncrementedIds);
+    }
+
+    [Fact]
+    public async Task StatsWithCorrectKeyReadsRepositoryEveryTimeAndDoesNotCountAccess()
+    {
+        var repository = new FakeRepository();
+        repository.Saved.Add(StatsLink());
+        var service = new LinkService(repository, new SequenceGenerator(), new TargetUrlValidator());
+
+        for (var request = 0; request < 2; request++)
+        {
+            var result = await service.GetStatsAsync("STATS1", "correct-key");
+            Assert.Equal(LinkStatsStatus.Found, result.Status);
+            Assert.Equal("STATS1", result.Code);
+            Assert.Equal(0L, result.AccessCount);
+        }
+
+        Assert.Equal(2, repository.Reads);
+        Assert.Empty(repository.IncrementedIds);
+        Assert.Equal(LinkStatsStatus.NotFound, (await service.GetStatsAsync("UNKNOWN", "correct-key")).Status);
+    }
+
+    [Fact]
+    public async Task WarmRedirectsAcrossServiceScopesSkipReadsButStillCountEveryAccess()
+    {
+        var repository = new FakeRepository();
+        repository.Saved.Add(StatsLink());
+        using var cache = new LinkRedirectCache();
+        using var cancellation = new CancellationTokenSource();
+
+        for (var request = 0; request < 5; request++)
+        {
+            var service = new LinkService(repository, new SequenceGenerator(), new TargetUrlValidator(),
+                redirectCache: cache);
+            var result = await service.ResolveAsync("STATS1", cancellation.Token);
+            Assert.Equal(ResolveLinkStatus.Found, result.Status);
+            Assert.Equal("https://8.8.8.8/", result.TargetUrl);
+        }
+
+        Assert.Equal(1, repository.Reads);
+        Assert.Equal(5, repository.IncrementedIds.Count);
+        Assert.All(repository.IncrementedIds, id => Assert.Equal(repository.Saved[0].Id, id));
+        Assert.Equal(cancellation.Token, repository.IncrementCancellationToken);
+    }
+
+    [Fact]
+    public async Task WarmRedirectStillChecksExpirationAtUtcMidnight()
+    {
+        var repository = new FakeRepository();
+        repository.Saved.Add(new Link
+        {
+            Code = "EXPIRY1", TargetUrl = "https://8.8.8.8/", ManagementKeyHash = "hash",
+            ExpiresAtUtc = DateTimeOffset.Parse("2026-10-17T00:00:00Z")
+        });
+        using var cache = new LinkRedirectCache();
+        var clock = new MutableTimeProvider { Now = DateTimeOffset.Parse("2026-10-17T23:59:59Z") };
+        var service = new LinkService(repository, new SequenceGenerator(), new TargetUrlValidator(), clock, cache);
+
+        Assert.Equal(ResolveLinkStatus.Found, (await service.ResolveAsync("EXPIRY1")).Status);
+        clock.Now = DateTimeOffset.Parse("2026-10-18T00:00:00Z");
+        Assert.Equal(ResolveLinkStatus.Expired, (await service.ResolveAsync("EXPIRY1")).Status);
+        Assert.Equal(1, repository.Reads);
+        Assert.Single(repository.IncrementedIds);
+    }
+
+    [Fact]
+    public async Task UnknownCodeIsNotCachedAndCanBeCreatedLater()
+    {
+        var repository = new FakeRepository();
+        using var cache = new LinkRedirectCache();
+        var service = new LinkService(repository, new SequenceGenerator(), new TargetUrlValidator(), redirectCache: cache);
+
+        Assert.Equal(ResolveLinkStatus.NotFound, (await service.ResolveAsync("STATS1")).Status);
+        repository.Saved.Add(StatsLink());
+        Assert.Equal(ResolveLinkStatus.Found, (await service.ResolveAsync("STATS1")).Status);
+        Assert.Equal(2, repository.Reads);
+    }
+
+    [Fact]
+    public async Task CancelledWarmRedirectDoesNotCountAccess()
+    {
+        var repository = new FakeRepository();
+        repository.Saved.Add(StatsLink());
+        using var cache = new LinkRedirectCache();
+        var service = new LinkService(repository, new SequenceGenerator(), new TargetUrlValidator(), redirectCache: cache);
+        await service.ResolveAsync("STATS1");
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.ResolveAsync("STATS1", cancellation.Token));
+        Assert.Single(repository.IncrementedIds);
+    }
+
+    private static Link StatsLink() => new()
+    {
+        Code = "STATS1", TargetUrl = "https://8.8.8.8/",
+        ManagementKeyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("correct-key")))
+    };
+
+    private sealed class MutableTimeProvider : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; }
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
@@ -228,6 +351,7 @@ public sealed class LinkServiceTests
         public string? ExistingCode { get; init; }
         public bool RejectFirstInsert { get; set; }
         public int Checks { get; private set; }
+        public int Reads { get; private set; }
         public List<Link> Saved { get; } = [];
         public List<Guid> IncrementedIds { get; } = [];
         public CancellationToken IncrementCancellationToken { get; private set; }
@@ -239,8 +363,11 @@ public sealed class LinkServiceTests
             return Task.CompletedTask;
         }
 
-        public Task<Link?> FindByCodeAsync(string code, CancellationToken cancellationToken) =>
-            Task.FromResult(Saved.SingleOrDefault(link => link.Code == code));
+        public Task<Link?> FindByCodeAsync(string code, CancellationToken cancellationToken)
+        {
+            Reads++;
+            return Task.FromResult(Saved.SingleOrDefault(link => link.Code == code));
+        }
 
         public Task<bool> CodeExistsAsync(string code, CancellationToken cancellationToken)
         {

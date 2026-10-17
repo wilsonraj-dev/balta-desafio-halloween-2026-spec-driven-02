@@ -18,6 +18,7 @@ public partial class Program
         builder.Services.AddScoped<ILinkRepository, LinkRepository>();
         builder.Services.AddSingleton<ILinkCodeGenerator, LinkCodeGenerator>();
         builder.Services.AddSingleton<TargetUrlValidator>();
+        builder.Services.AddSingleton<LinkRedirectCache>();
         builder.Services.AddScoped<LinkService>();
         builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = context =>
         {

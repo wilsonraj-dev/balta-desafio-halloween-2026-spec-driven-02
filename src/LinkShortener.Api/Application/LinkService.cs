@@ -10,11 +10,15 @@ public sealed record CreateLinkResult(
 public enum ResolveLinkStatus { Found, NotFound, Expired }
 public sealed record ResolveLinkResult(ResolveLinkStatus Status, string? TargetUrl = null);
 
+public enum LinkStatsStatus { Found, NotFound, Unauthorized }
+public sealed record LinkStatsResult(LinkStatsStatus Status, string? Code = null, long? AccessCount = null);
+
 public sealed class LinkService(
     ILinkRepository repository,
     ILinkCodeGenerator codeGenerator,
     TargetUrlValidator targetUrlValidator,
-    TimeProvider? timeProvider = null)
+    TimeProvider? timeProvider = null,
+    LinkRedirectCache? redirectCache = null)
 {
     public Task<CreateLinkResult> CreateAsync(
         string? targetUrl, CancellationToken cancellationToken = default) =>
@@ -66,17 +70,45 @@ public sealed class LinkService(
     public async Task<ResolveLinkResult> ResolveAsync(
         string code, CancellationToken cancellationToken = default)
     {
-        var link = await repository.FindByCodeAsync(code, cancellationToken);
-        if (link is null)
-            return new(ResolveLinkStatus.NotFound);
+        cancellationToken.ThrowIfCancellationRequested();
+        var redirect = redirectCache?.Find(code);
+        var cacheMiss = redirect is null;
+        if (redirect is null)
+        {
+            var link = await repository.FindByCodeAsync(code, cancellationToken);
+            if (link is null)
+                return new(ResolveLinkStatus.NotFound);
+
+            redirect = new CachedRedirect(link.Id, link.TargetUrl, link.ExpiresAtUtc);
+        }
 
         // RF-06: the link remains valid through the end of its expiration date in UTC.
-        if (link.ExpiresAtUtc is { } expiresAt
+        if (redirect.ExpiresAtUtc is { } expiresAt
             && expiresAt.UtcDateTime.Date < (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime.Date)
             return new(ResolveLinkStatus.Expired);
 
-        await repository.IncrementAccessCountAsync(link.Id, cancellationToken);
-        return new(ResolveLinkStatus.Found, link.TargetUrl);
+        await repository.IncrementAccessCountAsync(redirect.LinkId, cancellationToken);
+        if (cacheMiss)
+            redirectCache?.Store(code, redirect);
+        return new(ResolveLinkStatus.Found, redirect.TargetUrl);
+    }
+
+    public async Task<LinkStatsResult> GetStatsAsync(
+        string code, string? managementKey, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(managementKey))
+            return new(LinkStatsStatus.Unauthorized);
+
+        var link = await repository.FindByCodeAsync(code, cancellationToken);
+        if (link is null)
+            return new(LinkStatsStatus.NotFound);
+
+        var suppliedHash = SHA256.HashData(Encoding.UTF8.GetBytes(managementKey));
+        var storedHash = Convert.FromHexString(link.ManagementKeyHash);
+        if (!CryptographicOperations.FixedTimeEquals(suppliedHash, storedHash))
+            return new(LinkStatsStatus.Unauthorized);
+
+        return new(LinkStatsStatus.Found, link.Code, link.AccessCount);
     }
 
     private static CreateLinkResult CodeConflict() =>

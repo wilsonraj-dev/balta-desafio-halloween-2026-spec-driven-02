@@ -227,6 +227,76 @@ public sealed class LinkEndpointsTests
         });
     }
 
+    [Fact]
+    public async Task StatsReturnsFreshTotalAfterWarmRedirectsWithoutExposingSecretsOrCountingReads()
+    {
+        await WithApiAsync(async (client, _) =>
+        {
+            var creation = await client.PostAsJsonAsync("/api/links", new { targetUrl = "https://8.8.8.8/" });
+            var created = await creation.Content.ReadFromJsonAsync<CreateLinkResponse>();
+            Assert.NotNull(created);
+            client.DefaultRequestHeaders.Add("X-Management-Key", created.ManagementKey);
+
+            for (var count = 0; count < 3; count++)
+            {
+                var response = await client.GetAsync($"/api/links/{created.Code}/stats");
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                var stats = await response.Content.ReadFromJsonAsync<LinkStatsResponse>();
+                Assert.NotNull(stats);
+                Assert.Equal(created.Code, stats.Code);
+                Assert.Equal(count, stats.AccessCount);
+                var json = await response.Content.ReadAsStringAsync();
+                Assert.DoesNotContain("managementKey", json, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(created.ManagementKey, json);
+                using var redirect = await client.GetAsync("/" + created.Code);
+                Assert.Equal(HttpStatusCode.Found, redirect.StatusCode);
+            }
+        });
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("wrong-key")]
+    [InlineData("another-link-key")]
+    public async Task StatsWithoutCorrectKeyReturns401AndDoesNotCountAccess(string? key)
+    {
+        await WithApiAsync(async (client, databasePath) =>
+        {
+            var creation = await client.PostAsJsonAsync("/api/links", new { targetUrl = "https://8.8.8.8/" });
+            var created = await creation.Content.ReadFromJsonAsync<CreateLinkResponse>();
+            Assert.NotNull(created);
+            if (key == "another-link-key")
+            {
+                var otherCreation = await client.PostAsJsonAsync("/api/links", new { targetUrl = "https://8.8.8.8/other" });
+                var other = await otherCreation.Content.ReadFromJsonAsync<CreateLinkResponse>();
+                key = other!.ManagementKey;
+            }
+            if (key is not null)
+                client.DefaultRequestHeaders.Add("X-Management-Key", key);
+
+            var response = await client.GetAsync($"/api/links/{created.Code}/stats");
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            Assert.Equal("application/problem+json", response.Content.Headers.ContentType!.MediaType);
+            var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+            Assert.Equal(401, problem!.Status);
+            await using var context = CreateContext(databasePath);
+            Assert.All(await context.Links.ToListAsync(), link => Assert.Equal(0, link.AccessCount));
+        });
+    }
+
+    [Fact]
+    public async Task StatsForUnknownCodeReturns404()
+    {
+        await WithApiAsync(async (client, _) =>
+        {
+            client.DefaultRequestHeaders.Add("X-Management-Key", "some-key");
+            var response = await client.GetAsync("/api/links/UNKNOWN/stats");
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        });
+    }
+
     private static LinkDbContext CreateContext(string path) => new(
         new DbContextOptionsBuilder<LinkDbContext>().UseSqlite($"Data Source={path};Pooling=False").Options);
 

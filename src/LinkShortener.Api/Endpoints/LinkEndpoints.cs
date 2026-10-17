@@ -4,6 +4,7 @@ namespace LinkShortener.Api.Endpoints;
 
 public sealed record CreateLinkRequest(string? TargetUrl, string? Code = null);
 public sealed record CreateLinkResponse(string ShortUrl, string Code, string ManagementKey);
+public sealed record LinkStatsResponse(string Code, long AccessCount);
 
 public static class LinkEndpoints
 {
@@ -22,6 +23,21 @@ public static class LinkEndpoints
             var shortUrl = $"{httpRequest.Scheme}://{httpRequest.Host}{httpRequest.PathBase}/{result.Code}";
             return Results.Created(shortUrl,
                 new CreateLinkResponse(shortUrl, result.Code!, result.ManagementKey!));
+        });
+
+        endpoints.MapGet("/api/links/{code}/stats", async (
+            string code, LinkService service, HttpRequest request, CancellationToken cancellationToken) =>
+        {
+            var keys = request.Headers["X-Management-Key"];
+            var result = await service.GetStatsAsync(code, keys.Count == 1 ? keys[0] : null, cancellationToken);
+            return result.Status switch
+            {
+                LinkStatsStatus.Found => Results.Ok(new LinkStatsResponse(result.Code!, result.AccessCount!.Value)),
+                LinkStatsStatus.Unauthorized => Results.Problem(
+                    statusCode: StatusCodes.Status401Unauthorized, title: "Chave de gerenciamento inválida."),
+                _ => Results.Problem(
+                    statusCode: StatusCodes.Status404NotFound, title: "O link não existe.")
+            };
         });
 
         endpoints.MapGet("/{code}", async (
