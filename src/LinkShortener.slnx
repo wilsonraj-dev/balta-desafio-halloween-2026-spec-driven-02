@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="LinkShortener.Api/LinkShortener.Api.csproj" />
+  <Project Path="LinkShortener.Tests/LinkShortener.Tests.csproj" />
 </Solution>

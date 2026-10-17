@@ -1,0 +1,8 @@
+services:
+  database:
+    build:
+      context: .
+      dockerfile: Dockerfile.database
+    volumes:
+      - ./storage:/data
+    restart: "no"

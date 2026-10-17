@@ -1,2 +1,4 @@
 **/bin/
 **/obj/
+storage/*
+!storage/.gitkeep

@@ -21,6 +21,24 @@ do projeto.
   checagem no serviço, porque a checagem sozinha tem corrida
 - D-05: chave de gerenciamento da DC-03 armazenada como hash, nunca em texto puro
 
+## Dependências e execução da T-02
+- `Microsoft.EntityFrameworkCore.Sqlite` 10.0.5: provedor EF Core para a
+  persistência SQLite exigida pela constituição e por RF-08.
+- `SQLitePCLRaw.bundle_e_sqlite3` 3.0.5: atualização explícita do runtime
+  nativo transitivo do provedor, evitando a versão 2.1.11 sinalizada pelo
+  NuGet com a vulnerabilidade GHSA-2m69-gcr7-jv3q.
+- `Microsoft.EntityFrameworkCore.Design` e ferramenta local `dotnet-ef`
+  10.0.5: geração e aplicação versionada das migrações da T-02. O pacote
+  de design fica privado ao projeto, sem propagação para consumidores.
+- `xunit` 2.9.3, `xunit.runner.visualstudio` 3.1.4 e
+  `Microsoft.NET.Test.Sdk` 17.14.1: testes unitários e de persistência
+  executáveis por `dotnet test`, conforme a constituição.
+- SQLite é um banco embarcado, sem servidor separado. Docker executa
+  a migração em um contêiner com o arquivo em volume persistente compartilhado
+  com a API local. A migração é explícita, sem alterar o schema na inicialização
+  HTTP. O serviço de aplicação e o repositório serão implementados com os casos
+  de uso nas tarefas seguintes; a T-02 não expõe operações HTTP.
+
 ## Modelo de dados
 Link
 - Id, Code (único), TargetUrl, CreatedAtUtc, ExpiresAtUtc (nulo), AccessCount,

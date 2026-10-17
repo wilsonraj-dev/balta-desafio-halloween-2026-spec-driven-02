@@ -1,0 +1,8 @@
+FROM mcr.microsoft.com/dotnet/sdk:10.0
+WORKDIR /workspace
+COPY .config/dotnet-tools.json .config/dotnet-tools.json
+RUN dotnet tool restore
+COPY LinkShortener.Api/ LinkShortener.Api/
+RUN dotnet build LinkShortener.Api/LinkShortener.Api.csproj --configuration Release
+ENV ConnectionStrings__Links="Data Source=/data/links.db"
+ENTRYPOINT ["dotnet", "ef", "database", "update", "--no-build", "--configuration", "Release", "--project", "LinkShortener.Api"]
