@@ -1,4 +1,5 @@
 @page "/"
+@using Microsoft.AspNetCore.Components.Forms
 
 <PageTitle>Início | Encurtador de links</PageTitle>
 
@@ -10,8 +11,30 @@
     <p class="intro">Um espaço para transformar endereços longos em links fáceis de compartilhar.</p>
 
     <section class="status" aria-labelledby="status-title">
-        <h2 id="status-title">Estamos começando</h2>
-        <p>A página inicial já está disponível. A tela para encurtar links será disponibilizada em breve.</p>
+        <h2 id="status-title">Encurtar um link</h2>
+        <EditForm Model="Input" FormName="shorten-link" method="post" OnSubmit="ShortenAsync">
+            <label for="target-url">URL de destino</label>
+            <InputText id="target-url" type="url" @bind-Value="Input!.TargetUrl"
+                       required maxlength="2048" placeholder="https://exemplo.com/pagina" />
+            <label for="custom-code">Código próprio (opcional)</label>
+            <InputText id="custom-code" @bind-Value="Input.Code" maxlength="20"
+                       aria-describedby="code-help" />
+            <p id="code-help">Deixe vazio para gerar automaticamente. Use de 4 a 20 letras maiúsculas de A a Z ou números de 1 a 9.</p>
+            <button type="submit">Encurtar link</button>
+        </EditForm>
+        @if (Error is not null)
+        {
+            <p role="alert">@Error</p>
+        }
+        @if (ShortUrl is not null)
+        {
+            <div role="status">
+                <h3>Link criado!</h3>
+                <a href="@ShortUrl">@ShortUrl</a>
+                <p>Chave de gerenciamento: <code>@ManagementKey</code></p>
+                <p>Guarde esta chave para consultar as estatísticas do link.</p>
+            </div>
+        }
     </section>
 </main>
 

@@ -16,6 +16,12 @@
         .intro { max-width: 46ch; font-size: 1.125rem; line-height: 1.7; }
         .status { max-width: 38rem; margin-top: 2.5rem; padding: 1.25rem; background: white; border: 1px solid #d5ded7; border-radius: .75rem; line-height: 1.6; }
         .status p { margin: .5rem 0 0; }
+        form { display: grid; gap: .75rem; }
+        input, button { font: inherit; padding: .75rem; border: 1px solid #82968a; border-radius: .4rem; width: 100%; }
+        button { margin-top: .5rem; color: white; background: #38634d; cursor: pointer; }
+        input:focus-visible, button:focus-visible, a:focus-visible { outline: 3px solid #38634d; outline-offset: 3px; }
+        [role="alert"] { color: #a12020; }
+        [role="status"] { margin-top: 1.5rem; overflow-wrap: anywhere; }
         footer { padding-block: 1.5rem; border-top: 1px solid #d5ded7; font-size: .875rem; }
     </style>
     <HeadOutlet />
