@@ -137,7 +137,7 @@ public sealed class LinkEndpointsTests
     [InlineData("CUSTOM1")]
     public async Task GetCreatedLinkReturns302WithExactTargetUrl(string? code)
     {
-        await WithApiAsync(async (client, _) =>
+        await WithApiAsync(async (client, databasePath) =>
         {
             const string targetUrl = "https://8.8.8.8/path?value=1&other=2#fragment";
             var creation = await client.PostAsJsonAsync("/api/links", new { targetUrl, code });
@@ -149,6 +149,31 @@ public sealed class LinkEndpointsTests
 
             Assert.Equal(HttpStatusCode.Found, response.StatusCode);
             Assert.Equal(targetUrl, response.Headers.Location!.OriginalString);
+            await using var context = CreateContext(databasePath);
+            Assert.Equal(1, (await context.Links.SingleAsync()).AccessCount);
+        });
+    }
+
+    [Fact]
+    public async Task ConcurrentAutomatedRedirectsCountEveryAccess()
+    {
+        await WithApiAsync(async (client, databasePath) =>
+        {
+            const string targetUrl = "https://8.8.8.8/path";
+            var creation = await client.PostAsJsonAsync("/api/links", new { targetUrl, code = "COUNTER1" });
+            Assert.Equal(HttpStatusCode.Created, creation.StatusCode);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("CounterTestBot/1.0");
+            const int accessCount = 40;
+
+            await Task.WhenAll(Enumerable.Range(0, accessCount).Select(async _ =>
+            {
+                using var response = await client.GetAsync("/COUNTER1");
+                Assert.Equal(HttpStatusCode.Found, response.StatusCode);
+                Assert.Equal(targetUrl, response.Headers.Location!.OriginalString);
+            }));
+
+            await using var context = CreateContext(databasePath);
+            Assert.Equal(accessCount, (await context.Links.SingleAsync()).AccessCount);
         });
     }
 

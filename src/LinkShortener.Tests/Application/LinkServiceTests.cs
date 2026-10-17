@@ -148,12 +148,38 @@ public sealed class LinkServiceTests
     [Fact]
     public async Task UnknownCodeDoesNotResolve()
     {
-        var service = new LinkService(new FakeRepository(), new SequenceGenerator(), new TargetUrlValidator());
+        var repository = new FakeRepository();
+        var service = new LinkService(repository, new SequenceGenerator(), new TargetUrlValidator());
 
         var result = await service.ResolveAsync("UNKNOWN");
 
         Assert.Equal(ResolveLinkStatus.NotFound, result.Status);
         Assert.Null(result.TargetUrl);
+        Assert.Empty(repository.IncrementedIds);
+    }
+
+    [Fact]
+    public async Task EveryValidAccessIncrementsTheResolvedLinkAndForwardsCancellation()
+    {
+        var link = new Link
+        {
+            Code = "CUSTOM1", TargetUrl = "https://8.8.8.8/path", ManagementKeyHash = "hash"
+        };
+        var repository = new FakeRepository();
+        repository.Saved.Add(link);
+        var service = new LinkService(repository, new SequenceGenerator(), new TargetUrlValidator());
+        using var cancellation = new CancellationTokenSource();
+
+        for (var access = 0; access < 3; access++)
+        {
+            var result = await service.ResolveAsync(link.Code, cancellation.Token);
+
+            Assert.Equal(ResolveLinkStatus.Found, result.Status);
+            Assert.Equal(link.TargetUrl, result.TargetUrl);
+        }
+
+        Assert.Equal(new[] { link.Id, link.Id, link.Id }, repository.IncrementedIds);
+        Assert.Equal(cancellation.Token, repository.IncrementCancellationToken);
     }
 
     [Theory]
@@ -180,7 +206,10 @@ public sealed class LinkServiceTests
 
         Assert.Equal(expectedStatus, result.Status);
         Assert.Equal(expectedStatus == ResolveLinkStatus.Found ? link.TargetUrl : null, result.TargetUrl);
-        Assert.Equal(0, link.AccessCount);
+        if (expectedStatus == ResolveLinkStatus.Found)
+            Assert.Equal(link.Id, Assert.Single(repository.IncrementedIds));
+        else
+            Assert.Empty(repository.IncrementedIds);
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
@@ -200,6 +229,15 @@ public sealed class LinkServiceTests
         public bool RejectFirstInsert { get; set; }
         public int Checks { get; private set; }
         public List<Link> Saved { get; } = [];
+        public List<Guid> IncrementedIds { get; } = [];
+        public CancellationToken IncrementCancellationToken { get; private set; }
+
+        public Task IncrementAccessCountAsync(Guid linkId, CancellationToken cancellationToken)
+        {
+            IncrementedIds.Add(linkId);
+            IncrementCancellationToken = cancellationToken;
+            return Task.CompletedTask;
+        }
 
         public Task<Link?> FindByCodeAsync(string code, CancellationToken cancellationToken) =>
             Task.FromResult(Saved.SingleOrDefault(link => link.Code == code));

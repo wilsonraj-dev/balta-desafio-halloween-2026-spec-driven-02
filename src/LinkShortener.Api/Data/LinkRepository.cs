@@ -7,6 +7,13 @@ namespace LinkShortener.Api.Data;
 
 public sealed class LinkRepository(LinkDbContext context) : ILinkRepository
 {
+    public async Task IncrementAccessCountAsync(Guid linkId, CancellationToken cancellationToken)
+    {
+        await context.Links.Where(link => link.Id == linkId)
+            .ExecuteUpdateAsync(update => update.SetProperty(
+                link => link.AccessCount, link => link.AccessCount + 1), cancellationToken);
+    }
+
     public Task<Link?> FindByCodeAsync(string code, CancellationToken cancellationToken) =>
         context.Links.AsNoTracking().SingleOrDefaultAsync(link => link.Code == code, cancellationToken);
 
