@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <base href="/" />
+    <style>
+        :root { color-scheme: light; font-family: system-ui, sans-serif; color: #20302b; background: #f5f7f4; }
+        * { box-sizing: border-box; }
+        body { margin: 0; }
+        header, main, footer { width: min(100% - 3rem, 64rem); margin-inline: auto; }
+        header { padding-block: 2rem; font-weight: 700; border-bottom: 1px solid #d5ded7; }
+        main { padding-block: clamp(3rem, 10vw, 7rem); }
+        .eyebrow { color: #38634d; font-size: .875rem; font-weight: 600; }
+        h1 { max-width: 16ch; margin-block: 1rem; font-size: clamp(2.25rem, 7vw, 4rem); line-height: 1.1; letter-spacing: -.035em; }
+        .intro { max-width: 46ch; font-size: 1.125rem; line-height: 1.7; }
+        .status { max-width: 38rem; margin-top: 2.5rem; padding: 1.25rem; background: white; border: 1px solid #d5ded7; border-radius: .75rem; line-height: 1.6; }
+        .status p { margin: .5rem 0 0; }
+        footer { padding-block: 1.5rem; border-top: 1px solid #d5ded7; font-size: .875rem; }
+    </style>
+    <HeadOutlet />
+</head>
+<body>
+    <Routes />
+</body>
+</html>

@@ -1,4 +1,5 @@
 using LinkShortener.Api.Application;
+using LinkShortener.Api.Components;
 using LinkShortener.Api.Data;
 using LinkShortener.Api.Endpoints;
 using Microsoft.EntityFrameworkCore;
@@ -11,6 +12,7 @@ public partial class Program
     public static WebApplication CreateApp(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
+        builder.Services.AddRazorComponents();
         var databasePath = Path.GetFullPath(
             Path.Combine(builder.Environment.ContentRootPath, "..", "storage", "links.db"));
         builder.Services.AddDbContext<LinkDbContext>(options => options.UseSqlite(
@@ -28,7 +30,9 @@ public partial class Program
 
         var app = builder.Build();
         app.UseStatusCodePages();
+        app.UseAntiforgery();
         app.MapLinkEndpoints();
+        app.MapRazorComponents<App>();
         return app;
     }
 }
